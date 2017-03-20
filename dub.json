@@ -1,0 +1,15 @@
+{
+    "name": "vibe-noisestream",
+    "authors": [
+        "Johannes Pfau"
+    ],
+    "description": "A NoiseXX protocol implementation for vibe.D",
+    "copyright": "Copyright © 2017, Johannes Pfau",
+    "license": "MIT",
+    "dependencies": {
+        "sodium:deimos": "~>0.1.1",
+        "vibe-d": "==0.7.31-beta.2"
+    },
+    "libs": ["noiseprotocol"],
+    "targetType": "library"
+}

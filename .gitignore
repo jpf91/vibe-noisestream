@@ -1,0 +1,7 @@
+*.key
+*.lst
+vibe-noisestream-test-application
+docs.json
+.dub
+libvibe-noisestream.a
+libvibe-noisestream.lib
