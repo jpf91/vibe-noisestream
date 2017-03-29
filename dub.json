@@ -11,5 +11,6 @@
         "vibe-d": "==0.7.31-beta.2"
     },
     "libs": ["noiseprotocol"],
-    "targetType": "library"
+    "targetType": "library",
+    "-ddoxFilterArgs": ["--ex", "noise", "--in", "vibe.noise"]
 }
