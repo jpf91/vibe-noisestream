@@ -11,6 +11,8 @@ formalized.
 
 Note 2: Currently targets vibe.D < 0.7.x.
 
+The API documentation is available [here](https://jpf91.github.io/vibe-noisestream/vibe/noise.html).
+
 A simple server/client example:
 
 ```d
