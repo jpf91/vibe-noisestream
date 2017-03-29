@@ -1,6 +1,6 @@
 *.key
 *.lst
-vibe-noisestream-test-application
+vibe-noisestream-test-library
 docs.json
 .dub
 libvibe-noisestream.a
