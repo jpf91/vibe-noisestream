@@ -23,4 +23,5 @@ pushd noise-c
 popd
 
 dub test -b unittest-cov --combined
+chmod +x ./doveralls
 ./doveralls
