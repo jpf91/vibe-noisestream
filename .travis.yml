@@ -1,0 +1,13 @@
+language: d
+
+d:
+  - dmd
+
+before_install:
+  - sudo apt-get -qq update
+  - sudo apt-get install make build-essential pkg-config libtool automake -y
+
+install:
+  - wget -q -O - "http://bit.ly/Doveralls" | bash
+
+script: ./travis-ci.sh
