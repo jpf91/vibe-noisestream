@@ -1,5 +1,6 @@
 #!/bin/bash
 
+set -ex
 BASEDIR=${PWD}
 
 git clone git://github.com/jedisct1/libsodium.git
@@ -21,5 +22,6 @@ pushd noise-c
 popd
 
 dub test -b unittest-cov --combined
+rm src-noise.lst
 chmod +x ./doveralls
 ./doveralls
