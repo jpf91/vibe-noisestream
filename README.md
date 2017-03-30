@@ -1,6 +1,9 @@
 vibe-noisestream
 ================
 
+[![Coverage Status](https://coveralls.io/repos/github/jpf91/vibe-noisestream/badge.svg?branch=master)](https://coveralls.io/github/jpf91/vibe-noisestream?branch=master)
+[![Build Status](https://travis-ci.org/jpf91/vibe-noisestream.svg?branch=master)](https://travis-ci.org/jpf91/vibe-noisestream)
+
 This implements an ecryption socket based on the [Noise Protocol Framtwork](https://noiseprotocol.org/)
 for [vibe.D](http://vibed.org/). The [noise-c](https://github.com/rweather/noise-c)
 library is used to implement the `Noise_XX_25519_ChaChaPoly_BLAKE2b` protocol.
