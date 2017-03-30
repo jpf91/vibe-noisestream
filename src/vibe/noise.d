@@ -288,12 +288,9 @@ unittest
 {
     import std.file;
 
-    string privFile = "private.key";
     string pubFile = "public.key";
     scope (exit)
     {
-        if (privFile.exists)
-            remove(privFile);
         if (pubFile.exists)
             remove(pubFile);
     }
@@ -308,13 +305,13 @@ unittest
         "aabb00aabb00aabb00aaaabb00aabb00aabb00aaaabb00" ~ "aabb00aabb00aaaabb00aabb00aabb00aaaabb00aabb00aabb00aaaabb00aabb0" ~ "0aabb00aaaabb00aabb00aabb00aaaabb00aabb00aabb00aa");
     assertThrown(readPublicKey(pubFile, key[]));
 
+    // non-existent file
+    remove(pubFile);
+    assertThrown(readPublicKey(pubFile, key[]));
+
     // invalid data
     writeFileUTF8(Path(pubFile),
         "xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ~ "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    assertThrown(readPublicKey(pubFile, key[]));
-
-    // non-existent file
-    remove(pubFile);
     assertThrown(readPublicKey(pubFile, key[]));
 }
 
@@ -528,7 +525,7 @@ private:
         else
         {
             enforceEx!AuthException(settings.verifyRemoteKey(recPublicKey),
-                "Authentication failed: Verificaition callback returned false");
+                "Authentication failed: Verification callback returned false");
         }
 
         noiseCheck(noise_handshakestate_split(handshake, &_writeCipher, &_readCipher));
@@ -660,8 +657,15 @@ public:
     void write(InputStream stream, ulong nbytes = 0)
     {
         //TODO
-        assert(false, "Not implemented");
+        noiseEnforce(false, "Not implemented");
     }
+}
+
+// Test that nonimplemente function write(Stream) throws
+unittest
+{
+    auto s = new NoiseStream(null);
+    assertThrown(s.write(null, 1));
 }
 
 private:
@@ -679,6 +683,11 @@ void noiseCheck(int code, string msg = "", string file = __FILE__,
         throw new NoiseException(msg, code, file, line, next);
 }
 
+unittest
+{
+    assertThrown!NoiseException(noiseCheck(NOISE_ERROR_INVALID_PRIVATE_KEY));
+}
+
 __gshared int initResult;
 __gshared int sodiumResult = -1;
 
@@ -693,17 +702,111 @@ version (unittest)
     import vibe.d;
     import std.exception, std.stdio;
 
-    short testPort = 4000;
+    short testPort = 8000;
 
+    void testClientAuth()
+    {
+        sleep(dur!"seconds"(1));
+        auto conn = connectTCP("127.0.0.1", testPort);
+        auto settings = NoiseSettings(NoiseKind.client);
+        settings.privateKeyPath = Path("private.key");
+        settings.remoteKeyPath = Path("public.key");
+        assertThrown!AuthException(conn.createNoiseStream(settings));
+        exitEventLoop();
+    }
+
+    void testClientAuth2()
+    {
+        sleep(dur!"seconds"(1));
+        auto conn = connectTCP("127.0.0.1", testPort);
+        auto settings = NoiseSettings(NoiseKind.client);
+        settings.privateKeyPath = Path("private.key");
+        settings.verifyRemoteKey = (scope const(ubyte[]) remKey) { return false; };
+        assertThrown!AuthException(conn.createNoiseStream(settings));
+        exitEventLoop();
+    }
+ 
     void testClient()
     {
-        try
+        scope (exit)
+            exitEventLoop();
+
+        sleep(dur!"seconds"(1));
+        auto conn = connectTCP("127.0.0.1", testPort);
+        auto settings = NoiseSettings(NoiseKind.client);
+        settings.privateKeyPath = Path("private.key");
+        settings.remoteKeyPath = Path("public.key");
+        auto stream = conn.createNoiseStream(settings);
+
+        // Test up to 32kB
+        auto wdata = new ubyte[1024 * 32];
+        auto rdata = wdata.dup;
+        foreach (i, ref entry; wdata)
         {
-            sleep(dur!"seconds"(1));
-            auto conn = connectTCP("127.0.0.1", testPort);
-            auto settings = NoiseSettings(NoiseKind.client);
-            settings.privateKeyPath = Path("private.key");
-            settings.remoteKeyPath = Path("public.key");
+            entry = i % 256;
+        }
+
+        // Write all different data lengths
+        for (size_t i = 0; i < wdata.length; i++)
+        {
+            stream.write(wdata[0 .. i]);
+        }
+
+        // Read all different data lengths
+        for (size_t i = 0; i < rdata.length; i++)
+        {
+            stream.read(rdata[0 .. i]);
+            assert(rdata[0 .. i] == wdata[0 .. i]);
+        }
+
+        // Read/Write all different data lengths
+        for (size_t i = 0; i < wdata.length; i += 512)
+        {
+            stream.write(wdata[0 .. i]);
+            stream.read(rdata[0 .. i]);
+            assert(rdata[0 .. i] == wdata[0 .. i]);
+        }
+
+        // Read & keep some data in buffer, server sent 128 bytes;
+        stream.read(rdata[0 .. 64]);
+        assert(rdata[0 .. 64] == wdata[0 .. 64]);
+        assert(!stream.empty);
+        assert(stream.dataAvailableForRead);
+        assert(stream.leastSize == 64);
+        assert(stream.peek.length == 64 && stream.peek()[0 .. 64] == wdata[64 .. 128]);
+        // Now drain the internal buffer exactly
+        stream.read(rdata[64 .. 128]);
+        assert(rdata[0 .. 128] == wdata[0 .. 128]);
+        assert(!stream.empty);
+        assert(!stream.dataAvailableForRead);
+        assert(stream.peek.length == 0);
+
+        // Now this reads in the next packet
+        assert(stream.leastSize == 64);
+        // Now read two 64 byte writes as one 128 byte read
+        stream.read(rdata[0 .. 128]);
+        assert(rdata[0 .. 128] == wdata[0 .. 128]);
+
+        // Now test stream closed behaviour
+        assert(stream.empty);
+        assert(!stream.dataAvailableForRead);
+        assert(stream.leastSize == 0);
+        assert(stream.peek().length == 0);
+        assertThrown(stream.read(rdata[0 .. 128]));
+
+        stream.finalize();
+        conn.close();
+    }
+
+    struct NoiseServer
+    {
+        NoiseSettings settings;
+
+        void testServer(TCPConnection conn)
+        {
+            scope (failure)
+                exitEventLoop();
+
             auto stream = conn.createNoiseStream(settings);
 
             // Test up to 32kB
@@ -714,12 +817,6 @@ version (unittest)
                 entry = i % 256;
             }
 
-            // Write all different data lengths
-            for (size_t i = 0; i < wdata.length; i++)
-            {
-                stream.write(wdata[0 .. i]);
-            }
-
             // Read all different data lengths
             for (size_t i = 0; i < rdata.length; i++)
             {
@@ -727,106 +824,29 @@ version (unittest)
                 assert(rdata[0 .. i] == wdata[0 .. i]);
             }
 
-            // Read/Write all different data lengths
-            for (size_t i = 0; i < wdata.length; i += 512)
+            // Write all different data lengths
+            for (size_t i = 0; i < wdata.length; i++)
             {
                 stream.write(wdata[0 .. i]);
+            }
+
+            // Write/Read different data lengths
+            for (size_t i = 0; i < wdata.length; i += 512)
+            {
                 stream.read(rdata[0 .. i]);
+                stream.write(wdata[0 .. i]);
                 assert(rdata[0 .. i] == wdata[0 .. i]);
             }
 
-            // Read & keep some data in buffer, server sent 128 bytes;
-            stream.read(rdata[0 .. 64]);
-            assert(rdata[0 .. 64] == wdata[0 .. 64]);
-            assert(!stream.empty);
-            assert(stream.dataAvailableForRead);
-            assert(stream.leastSize == 64);
-            assert(stream.peek.length == 64 && stream.peek()[0 .. 64] == wdata[64 .. 128]);
-            // Now drain the internal buffer exactly
-            stream.read(rdata[64 .. 128]);
-            assert(rdata[0 .. 128] == wdata[0 .. 128]);
-            assert(!stream.empty);
-            assert(!stream.dataAvailableForRead);
-            assert(stream.peek.length == 0);
+            // Send 128 bytes;
+            stream.write(wdata[0 .. 128]);
+            // Send two 64 byte packets
+            stream.write(wdata[0 .. 64]);
+            stream.write(wdata[64 .. 128]);
 
-            // Now this reads in the next packet
-            assert(stream.leastSize == 64);
-            // Now read two 64 byte writes as one 128 byte read
-            stream.read(rdata[0 .. 128]);
-            assert(rdata[0 .. 128] == wdata[0 .. 128]);
-
-            // Now test stream closed behaviour
-            assert(stream.empty);
-            assert(!stream.dataAvailableForRead);
-            assert(stream.leastSize == 0);
-            assert(stream.peek().length == 0);
-            assertThrown(stream.read(rdata[0 .. 128]));
-
+            stream.flush();
             stream.finalize();
             conn.close();
-            exitEventLoop();
-        }
-        catch (Exception e)
-        {
-            writeln(e);
-            exitEventLoop();
-        }
-    }
-
-    struct NoiseServer
-    {
-        NoiseSettings settings;
-
-        void testServer(TCPConnection conn)
-        {
-            try
-            {
-                auto stream = conn.createNoiseStream(settings);
-
-                // Test up to 32kB
-                auto wdata = new ubyte[1024 * 32];
-                auto rdata = wdata.dup;
-                foreach (i, ref entry; wdata)
-                {
-                    entry = i % 256;
-                }
-
-                // Read all different data lengths
-                for (size_t i = 0; i < rdata.length; i++)
-                {
-                    stream.read(rdata[0 .. i]);
-                    assert(rdata[0 .. i] == wdata[0 .. i]);
-                }
-
-                // Write all different data lengths
-                for (size_t i = 0; i < wdata.length; i++)
-                {
-                    stream.write(wdata[0 .. i]);
-                }
-
-                // Write/Read different data lengths
-                for (size_t i = 0; i < wdata.length; i += 512)
-                {
-                    stream.read(rdata[0 .. i]);
-                    stream.write(wdata[0 .. i]);
-                    assert(rdata[0 .. i] == wdata[0 .. i]);
-                }
-
-                // Send 128 bytes;
-                stream.write(wdata[0 .. 128]);
-                // Send two 64 byte packets
-                stream.write(wdata[0 .. 64]);
-                stream.write(wdata[64 .. 128]);
-
-                stream.flush();
-                stream.finalize();
-                conn.close();
-            }
-            catch (Exception e)
-            {
-                writeln(e);
-                exitEventLoop();
-            }
         }
     }
 }
@@ -991,6 +1011,75 @@ unittest
     testPort++;
 }
 
+// Fail Authentication
+unittest
+{
+    import std.file;
+
+    string privFile = "private.key";
+    string pubFile = "public.key";
+
+    createKeys(privFile, pubFile);
+    scope (exit)
+    {
+        if (privFile.exists)
+            remove(privFile);
+        if (pubFile.exists)
+            remove(pubFile);
+    }
+
+    // Run server
+    auto settings = NoiseSettings(NoiseKind.server);
+    settings.privateKeyPath = Path(privFile);
+    settings.remoteKeyPath = Path(pubFile);
+    auto server = NoiseServer(settings);
+    listenTCP(testPort, &server.testServer);
+
+    // Run client
+    runTask(toDelegate(&testClientAuth2));
+
+    runEventLoop();
+    testPort++;
+}
+
+// Fail Authentication
+unittest
+{
+    import std.file;
+
+    string privFile = "private.key";
+    string pubFile = "public.key";
+    string privFile2 = "private2.key";
+    string pubFile2 = "public2.key";
+
+    createKeys(privFile, pubFile);
+    createKeys(privFile2, pubFile2);
+    scope (exit)
+    {
+        if (privFile.exists)
+            remove(privFile);
+        if (pubFile.exists)
+            remove(pubFile);
+        if (privFile2.exists)
+            remove(privFile2);
+        if (pubFile2.exists)
+            remove(pubFile2);
+    }
+
+    // Run server
+    auto settings = NoiseSettings(NoiseKind.server);
+    settings.privateKeyPath = Path(privFile2);
+    settings.remoteKeyPath = Path(pubFile);
+    auto server = NoiseServer(settings);
+    listenTCP(testPort, &server.testServer);
+
+    // Run client
+    runTask(toDelegate(&testClientAuth));
+
+    runEventLoop();
+    testPort++;
+}
+
 // Test invalid settings
 unittest
 {
@@ -1006,11 +1095,7 @@ unittest
 
     // No private key
     auto settings = NoiseSettings(NoiseKind.server);
-    settings.verifyRemoteKey = (scope const(ubyte[]) remKey) {
-        assert(remKey[] == pubKey[]);
-        return remKey[] == pubKey[];
-    };
-    assertThrown(createNoiseStream(null, settings));
+    settings.remoteKeyPath = Path(pubFile);
 
     // No public key verification
     settings = NoiseSettings(NoiseKind.server);
