@@ -804,9 +804,6 @@ version (unittest)
 
         void testServer(TCPConnection conn)
         {
-            scope (failure)
-                exitEventLoop();
-
             auto stream = conn.createNoiseStream(settings);
 
             // Test up to 32kB
