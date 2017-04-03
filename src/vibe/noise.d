@@ -1031,7 +1031,9 @@ unittest
     // Run server
     auto settings = NoiseSettings(NoiseKind.server);
     settings.privateKeyPath = Path(privFile);
-    settings.remoteKeyPath = Path(pubFile);
+    settings.verifyRemoteKey = (scope const(ubyte[]) remKey) {
+        return true;
+    };
     auto server = NoiseServer(settings);
     listenTCP(testPort, &server.testServer);
 
@@ -1069,7 +1071,9 @@ unittest
     // Run server
     auto settings = NoiseSettings(NoiseKind.server);
     settings.privateKeyPath = Path(privFile2);
-    settings.remoteKeyPath = Path(pubFile);
+    settings.verifyRemoteKey = (scope const(ubyte[]) remKey) {
+        return true;
+    };
     auto server = NoiseServer(settings);
     listenTCP(testPort, &server.testServer);
 
