@@ -405,10 +405,25 @@ private:
     ubyte[] _readDecrypted;
     // Buffer used for writing only
     ubyte[2048] _writeBuf;
+    size_t _writeCached;
 
     this(Stream stream) pure nothrow @safe @nogc
     {
         this._stream = stream;
+    }
+
+    void encryptAndSend()
+    {
+        NoiseBuffer mbuf;
+        if (_writeCached != 0)
+        {
+            noise_buffer_set_inout(mbuf, &_writeBuf[2], _writeCached, _writeBuf.length - 2);
+            noiseCheck(noise_cipherstate_encrypt(_writeCipher, &mbuf));
+            _writeBuf[0] = cast(ubyte)(mbuf.size >> 8);
+            _writeBuf[1] = cast(ubyte) mbuf.size;
+            _stream.write(_writeBuf[0 .. mbuf.size + 2]);
+            _writeCached = 0;
+        }
     }
 
     size_t readPacket()
@@ -608,20 +623,19 @@ public:
     void write(in ubyte[] bytesConst)
     {
         const(ubyte)[] bytes = bytesConst;
-        NoiseBuffer mbuf;
         while (bytes.length != 0)
         {
             // 2 bytes for length, 16 bytes for MAC
             enum MaxDataLength = _writeBuf.length - 2 - 16;
-            auto nextWrite = min(bytes.length, MaxDataLength);
-            _writeBuf[2 .. nextWrite + 2] = bytes[0 .. nextWrite];
-            bytes = bytes[nextWrite .. $];
+            auto bufFree = MaxDataLength - _writeCached;
+            auto nextWrite = min(bytes.length, bufFree);
 
-            noise_buffer_set_inout(mbuf, &_writeBuf[2], nextWrite, _writeBuf.length - 2);
-            noiseCheck(noise_cipherstate_encrypt(_writeCipher, &mbuf));
-            _writeBuf[0] = cast(ubyte)(mbuf.size >> 8);
-            _writeBuf[1] = cast(ubyte) mbuf.size;
-            _stream.write(_writeBuf[0 .. mbuf.size + 2]);
+            _writeBuf[2 + _writeCached .. 2 + _writeCached + nextWrite] = bytes[0 .. nextWrite];
+            bytes = bytes[nextWrite .. $];
+            _writeCached += nextWrite;
+
+            if(_writeCached == MaxDataLength)
+                encryptAndSend();
         }
     }
 
@@ -630,10 +644,8 @@ public:
      */
     void flush()
     {
+        encryptAndSend();
         _stream.flush();
-        // We always create one crypted packet in write
-        // TODO: is this a problem for small writes? Is flush for network like
-        // streams well supported? Then we could fill the buffer before writing...
     }
 
     /**
@@ -725,7 +737,7 @@ version (unittest)
         assertThrown!AuthException(conn.createNoiseStream(settings));
         exitEventLoop();
     }
- 
+
     void testClient()
     {
         scope (exit)
@@ -751,6 +763,7 @@ version (unittest)
         {
             stream.write(wdata[0 .. i]);
         }
+        stream.flush();
 
         // Read all different data lengths
         for (size_t i = 0; i < rdata.length; i++)
@@ -763,6 +776,7 @@ version (unittest)
         for (size_t i = 0; i < wdata.length; i += 512)
         {
             stream.write(wdata[0 .. i]);
+            stream.flush();
             stream.read(rdata[0 .. i]);
             assert(rdata[0 .. i] == wdata[0 .. i]);
         }
@@ -826,22 +840,26 @@ version (unittest)
             {
                 stream.write(wdata[0 .. i]);
             }
+            stream.flush();
 
             // Write/Read different data lengths
             for (size_t i = 0; i < wdata.length; i += 512)
             {
                 stream.read(rdata[0 .. i]);
                 stream.write(wdata[0 .. i]);
+                stream.flush();
                 assert(rdata[0 .. i] == wdata[0 .. i]);
             }
 
             // Send 128 bytes;
             stream.write(wdata[0 .. 128]);
+            stream.flush();
             // Send two 64 byte packets
             stream.write(wdata[0 .. 64]);
-            stream.write(wdata[64 .. 128]);
-
             stream.flush();
+            stream.write(wdata[64 .. 128]);
+            stream.flush();
+
             stream.finalize();
             conn.close();
         }
@@ -1028,9 +1046,7 @@ unittest
     // Run server
     auto settings = NoiseSettings(NoiseKind.server);
     settings.privateKeyPath = Path(privFile);
-    settings.verifyRemoteKey = (scope const(ubyte[]) remKey) {
-        return true;
-    };
+    settings.verifyRemoteKey = (scope const(ubyte[]) remKey) { return true; };
     auto server = NoiseServer(settings);
     listenTCP(testPort, &server.testServer);
 
@@ -1068,9 +1084,7 @@ unittest
     // Run server
     auto settings = NoiseSettings(NoiseKind.server);
     settings.privateKeyPath = Path(privFile2);
-    settings.verifyRemoteKey = (scope const(ubyte[]) remKey) {
-        return true;
-    };
+    settings.verifyRemoteKey = (scope const(ubyte[]) remKey) { return true; };
     auto server = NoiseServer(settings);
     listenTCP(testPort, &server.testServer);
 
