@@ -9,14 +9,22 @@ for [vibe.D](http://vibed.org/). The [noise-c](https://github.com/rweather/noise
 library is used to implement the `Noise_XX_25519_ChaChaPoly_BLAKE2b` protocol.
 [libsodium](http://libsodium.org) is used for secure key memory management.
 
-Note: This project will switch to the NoiseSocket protocol once that has been
-formalized.
-
-Note 2: Currently targets vibe.D < 0.7.x.
-
 The API documentation is available [here](https://jpf91.github.io/vibe-noisestream/vibe/noise.html).
 
-A simple server/client example:
+Note
+-----
+
+* This project will switch to the [noise socket](https://github.com/noisesocket/spec/blob/master/noise_socket.md) protocol once that has been
+formalized.
+* Currently targets vibe.D 0.7.x.
+* This implements a simple noise protocol without rekeying. This means
+  after `2^64-1` messages a socket can no longer be used to send messages
+  (an Exception will be thrown instead). This also means that long-running
+  connections keep using the same key. If this temporary key gets compromised
+  an attacker could decrypt the complete session.
+
+A simple server/client example
+-------------------------------
 
 ```d
 import vibe.d, vibe.noise;
@@ -64,11 +72,3 @@ void server()
 }
 
 ```
-
-Known limitations:
-------------------
-This implements a simple noise protocol without rekeying. This means
-after `2^64-1` messages a socket can no longer be used to send messages 
-(an Exception will be thrown instead). This also means that long-running
-connections keep using the same key. If this temporary key gets compromised
-an attacker could decrypt the complete session.
